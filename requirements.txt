@@ -1,0 +1,12 @@
+pandas
+ipykernel
+jupyter
+matplotlib
+scipy
+seaborn
+scikit-surprise
+python-dotenv
+scikit-learn
+streamlit
+black
+numpy
