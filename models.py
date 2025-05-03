@@ -69,8 +69,8 @@ class ModelBaseline3(AlgoBase):
 
     def fit(self, trainset):
         AlgoBase.fit(self, trainset)
-        self.the_mean = np.mean([r for (_, _, r) in self.trainset.all_ratings()])
-
+        #self.the_mean = np.mean([r for (_, _, r) in self.trainset.all_ratings()])
+        self.the_mean = np.mean([r for (_, _, r) in trainset.all_ratings()])
         return self
 
     def estimate(self, u, i):

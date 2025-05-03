@@ -1,6 +1,6 @@
 # third parties imports
 from pathlib import Path
-
+from datetime import datetime
 
 class Constant:
 
@@ -25,4 +25,5 @@ class Constant:
     USER_ITEM_RATINGS = [USER_ID_COL, ITEM_ID_COL, RATING_COL]
 
     # Rating scale
-    RATINGS_SCALE = None  # -- fill in here the ratings scale as a tuple (min_value, max_value)
+    RATINGS_SCALE = (0.5, 5.0)  # -- fill in here the ratings scale as a tuple (min_value, max_value)
+    EVALUATION_PATH = f'{datetime.today().strftime("%Y-%m-%d_%H-%M-%S")}.csv'
