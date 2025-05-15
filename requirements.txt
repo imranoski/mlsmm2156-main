@@ -5,6 +5,7 @@ matplotlib
 scipy
 seaborn
 scikit-surprise
+scikit-learn
 python-dotenv
 scikit-learn
 streamlit
