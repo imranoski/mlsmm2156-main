@@ -7,7 +7,6 @@ seaborn
 scikit-surprise
 scikit-learn
 python-dotenv
-scikit-learn
 streamlit
 black
 numpy==1.26.4
