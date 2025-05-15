@@ -21,6 +21,17 @@ def load_items():
     df_items = df_items.set_index(C.ITEM_ID_COL)
     return df_items
 
+def load_visuals(mode = 'log'):
+    if mode == 'log':
+        df_visuals = pd.read_csv(C.VISUAL_PATH / C.VISUAL_LOG_FILENAME)
+        print(C.VISUAL_PATH / C.VISUAL_LOG_FILENAME)
+    elif mode == 'quantile':
+        df_visuals = pd.read_csv(C.VISUAL_PATH / C.VISUAL_QUANTILE_FILENAME)
+    elif mode == 'quantilelog':
+        df_visuals = pd.read_csv(C.VISUAL_PATH / C.VISUAL_QUANTILELOG_FILENAME)
+    print(df_visuals.columns)
+    df_visuals = df_visuals.set_index(C.VISUAL_MOVIE_ID)
+    return df_visuals
 
 def export_evaluation_report(df):
     df.to_csv(C.EVALUATION_PATH)

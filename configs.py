@@ -5,10 +5,7 @@ from models import *
 class EvalConfig:
     
     models = [
-        ("baseline_1", ModelBaseline1, {}),
-        ("baseline_2", ModelBaseline2, {}),
-        ("baseline_3", ModelBaseline3, {}),
-        ("baseline_4", ModelBaseline4, {})  # model_name, model class, model parameters (dict)
+        ("content_based", ContentBased, {'features_method' : 'title_length' , 'regressor_method': 'random_score'})  # model_name, model class, model parameters (dict)
     ]
     split_metrics = ["mae", "rmse"]
     loo_metrics = ["hitrate"]
