@@ -10,3 +10,4 @@ python-dotenv
 streamlit
 black
 numpy==1.26.4
+nltk

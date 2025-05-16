@@ -14,6 +14,7 @@ class Constant:
     ITEM_ID_COL = 'movieId'
     LABEL_COL = 'title'
     GENRES_COL = 'genres'
+    YEAR = 'year'
 
     # Evidence
     EVIDENCE_PATH = DATA_PATH / 'evidence'
@@ -43,3 +44,11 @@ class Constant:
     MEAN_MOT_STD = 'f5'
     MEAN_LIGHTING = 'f6'
     SHOT_NUM = 'f7'
+
+    # Genome
+    GENOME_PATH = DATA_PATH / 'content'
+    GENOME_TAGS = 'genome-tags.csv'
+    GENOME_SCORES = 'genome-scores.csv'
+    GENOME_TAG_ID = 'tagId'
+    GENOME_TAG = 'tag'
+    GENOME_REL = 'relevance'
