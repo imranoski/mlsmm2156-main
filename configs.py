@@ -5,7 +5,7 @@ from models import *
 class EvalConfig:
     
     models = [
-        ("content_based", ContentBased, {'features_method' : 'all' , 'regressor_method': 'linear'})  # model_name, model class, model parameters (dict)
+        ("content_based", ContentBased, {'features_method' : 'all' , 'regressor_method': 'random_forest'})  # model_name, model class, model parameters (dict)
     ]
     split_metrics = ["mae", "rmse"]
     #loo_metrics = ["hitrate"]
@@ -17,4 +17,4 @@ class EvalConfig:
     test_size = 0.25  # -- configure the test_size (from 0 to 1) --
 
     # Loo parameters
-    top_n_value = 40  # -- configure the numer of recommendations (> 1) --
+    top_n_value = 40  # -- configure the number of recommendations (> 1) --

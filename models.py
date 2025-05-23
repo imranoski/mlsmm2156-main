@@ -8,12 +8,39 @@ import pandas as pd
 from surprise import AlgoBase
 from surprise import KNNWithMeans
 from surprise import SVD, PredictionImpossible
-from sklearn.linear_model import LinearRegression, SGDRegressor
+from sklearn.linear_model import LinearRegression, SGDRegressor, Ridge
 from sklearn.svm import LinearSVR
-from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.ensemble import RandomForestRegressor
-from loaders import load_items, load_ratings, load_visuals, load_genome
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from loaders import load_items, load_ratings, load_visuals, load_genome, load_items_tfidf
+from sklearn.feature_selection import SelectFromModel
+from sklearn.base import clone
 from constants import Constant as C
+
+regressor_map = {
+            'linear_fi_true': LinearRegression(fit_intercept=True),
+            'linear_fi_false': LinearRegression(fit_intercept=False),
+            'sgd_fi_false': SGDRegressor(fit_intercept=False),
+            'svr_fi_false': LinearSVR(fit_intercept=False),
+            'sgd_fi_true': SGDRegressor(fit_intercept=True),
+            'svr_fi_true': LinearSVR(fit_intercept=True),
+            'random_forest': RandomForestRegressor(n_estimators=10, max_depth = 3),
+            'ridge_fi_false' : Ridge(max_iter=1000, alpha=1.0, fit_intercept=False),
+            'ridge_fi_true' : Ridge(max_iter=1000, alpha=1.0, fit_intercept=True),
+            'gradient' : GradientBoostingRegressor(n_estimators=100,  
+                                                    learning_rate=0.1, 
+                                                    max_depth=3,        
+                                                    random_state=42)                            
+        }
+
+linearmodels =    ['linear_fi_true',
+            'linear_fi_false',
+            'sgd_fi_false',
+            'svr_fi_false',
+            'sgd_fi_true',
+            'svr_fi_true',
+            'ridge_fi_true',
+            'ridge_fi_false']
 
 def get_top_n(predictions, n):
     """Return the top-N recommendation for each user from a set of predictions.
@@ -45,7 +72,7 @@ def get_top_n(predictions, n):
 
     return top_n
 
-'''
+
 # First algorithm
 class ModelBaseline1(AlgoBase):
     def __init__(self):
@@ -89,7 +116,7 @@ class ModelBaseline4(SVD):
         SVD.__init__(self, n_factors=100, random_state = 1)
 
 
-''' 
+
 class ContentBased(AlgoBase):
     def __init__(self, features_method, regressor_method):
         AlgoBase.__init__(self)
@@ -98,14 +125,17 @@ class ContentBased(AlgoBase):
 
     def create_content_features(self, features_method):
         """Content Analyzer"""
+        scaler = MinMaxScaler()
         df_items = load_items()
-        df_ratings = load_ratings()
+        df_items[[C.YEAR]] = scaler.fit_transform(df_items[[C.YEAR]])
+
         if features_method is None:
             df_features = None
 
         elif features_method == "title_length": # a naive method that creates only 1 feature based on title length
             df_features = df_items[C.LABEL_COL].apply(lambda x: len(x)).to_frame('n_character_title')
             print(df_features)
+
         elif features_method == "visual" :
             df_visuals = load_visuals(mode = 'quantile')
             df_visuals_ratings = df_items.merge(df_visuals, how = 'inner', left_index = True, right_index = True)
@@ -113,147 +143,101 @@ class ContentBased(AlgoBase):
             df_features = df_features.select_dtypes(include=[np.number])
             print(df_features)
 
-        elif features_method == "multi":
-            mlb = MultiLabelBinarizer()
-            df_genres = pd.DataFrame(mlb.fit_transform(df_items['genres']), columns=mlb.classes_, index=df_items.index)
-            df_features = pd.concat([df_genres, df_items[C.YEAR]], axis=1)
-            df_features.index = df_items.index 
-            df_features = df_features.dropna()
-            print(df_features)
-
-        elif features_method == "multi_visual" : 
-            mlb = MultiLabelBinarizer()
-            df_visuals = load_visuals(mode = 'quantile')
-            df_genres = pd.DataFrame(mlb.fit_transform(df_items['genres']), columns=mlb.classes_, index=df_items.index)
-            df_features = pd.concat([df_genres, df_items[C.YEAR]], axis=1)
-            df_features.index = df_items.index 
-            df_features = df_features.merge(df_visuals, how = 'inner', left_index=True, right_index=True)
-            df_features = df_features.dropna()
-            print(df_features)
-
         elif features_method == "all": 
-            mlb = MultiLabelBinarizer()
-            df_visuals = load_visuals(mode = 'quantile')
+            df_visuals = load_visuals(mode='quantile')
             df_genome = load_genome()
-            df_genres = pd.DataFrame(mlb.fit_transform(df_items['genres']), columns=mlb.classes_, index=df_items.index)
-            df_genome = pd.DataFrame(mlb.fit_transform(df_genome[C.GENOME_TAG]), columns = mlb.classes_, index=df_genome.index)
-            #df_features = pd.concat([df_genres, df_items[C.YEAR], df_genome], axis=1)
-            df_features = df_items[[C.YEAR]].join([df_genres, df_genome, df_visuals], how='left').fillna(0)
-            df_features.index = df_items.index 
-            #df_features = df_features.merge(df_visuals, how = 'inner', left_index=True, right_index=True)
-            #df_features = df_features.merge(df_genome, how = 'inner', on = C.ITEM_ID_COL)
-            df_features = df_features.dropna()
+            df_genres = load_items_tfidf()
+
+            overlap = set(df_genome.columns) & set(df_genres.columns)
+            df_genres = df_genres.drop(columns=overlap)
+
+            df_genome_renamed = df_genome.add_prefix('genome_')
+
+            df_temp = pd.concat([df_genome_renamed, df_visuals], axis=1)
+
+            df_features = df_items[[C.YEAR]].join([df_genres, df_temp], how='left').fillna(0)
+            df_features.index = df_items.index
+
+            df_features.to_csv('all-features.csv')
             print(df_features)
-            
+
         else: # (implement other feature creations here)
             raise NotImplementedError(f'Feature method {features_method} not yet implemented')
+        print(df_features)
+        df_features.to_csv('df_features.csv')
         return df_features
-    
 
     def fit(self, trainset):
-        """Profile Learner"""
         AlgoBase.fit(self, trainset)
-        
-        # Preallocate user profiles
         self.user_profile = {u: None for u in trainset.all_users()}
+        self.user_profile_explain = {}
 
-        if self.regressor_method == 'random_score':
-            pass
-        
-        elif self.regressor_method == 'random_sample':
-            for u in self.user_profile:
-                self.user_profile[u] = [rating for _, rating in self.trainset.ur[u]]
+        if self.regressor_method not in regressor_map:
+            print(f"Unsupported regressor: {self.regressor_method}")
+            return
 
-            # (implement here the regressor fitting)  
-        elif self.regressor_method == 'linear':
-            for u in self.user_profile:
-                ratings = self.trainset.ur[u]
-                df_user = pd.DataFrame(ratings, columns=['inner_item_id', 'user_ratings'])
-                df_user["item_id"] = df_user["inner_item_id"].map(self.trainset.to_raw_iid)
-                df_user = df_user.merge(self.content_features, how='left', left_on='item_id', right_index=True )
-                
-                df_user = df_user.dropna()
+        model = regressor_map[self.regressor_method]
 
-                if len(df_user) == 0:
-                    self.user_profile[u] = None
-                    continue
+        for u in self.user_profile:
+            ratings = self.trainset.ur[u]
+            df_user = pd.DataFrame(ratings, columns=['inner_item_id', 'user_ratings'])
+            df_user["item_id"] = df_user["inner_item_id"].map(self.trainset.to_raw_iid)
+            df_user = df_user.merge(self.content_features, how='left', left_on='item_id', right_index=True)
+            df_user = df_user.dropna()
 
-                feature_names = list(self.content_features.columns)
-                X = df_user[feature_names].values
-                y = df_user["user_ratings"].values
+            if df_user.empty:
+                self.user_profile[u] = None
+                self.user_profile_explain[u] = None
+                continue
 
-                reg = LinearRegression(fit_intercept=False)
-                reg.fit(X, y)
+            feature_names = list(self.content_features.columns)
+            X = df_user[feature_names].values
+            y = df_user["user_ratings"].values
+            reg = clone(model)
 
-                self.user_profile[u] = reg
-        elif self.regressor_method == 'sgd':
-            for u in self.user_profile:
-                ratings = self.trainset.ur[u]
-                df_user = pd.DataFrame(ratings, columns=['inner_item_id', 'user_ratings'])
-                df_user["item_id"] = df_user["inner_item_id"].map(self.trainset.to_raw_iid)
-                df_user = df_user.merge(self.content_features, how='left', left_on='item_id', right_index=True )
-                
-                df_user = df_user.dropna()
+            selector = SelectFromModel(estimator=reg, threshold='median')
+            selector.fit(X, y)
 
-                if len(df_user) == 0:
-                    self.user_profile[u] = None
-                    continue
+            reg = selector.estimator_ 
 
-                feature_names = list(self.content_features.columns)
-                X = df_user[feature_names].values
-                y = df_user["user_ratings"].values
+            try:
+                print(f'Intercept : {reg.intercept_}')
+            except AttributeError:
+                pass  
 
-                reg = SGDRegressor(fit_intercept=False)
-                reg.fit(X, y)
+            self.user_profile[u] = {
+                'model': reg,
+                'selector': selector
+            }
 
-                self.user_profile[u] = reg
-        elif self.regressor_method == 'svr':
-            for u in self.user_profile:
-                ratings = self.trainset.ur[u]
-                df_user = pd.DataFrame(ratings, columns=['inner_item_id', 'user_ratings'])
-                df_user["item_id"] = df_user["inner_item_id"].map(self.trainset.to_raw_iid)
-                df_user = df_user.merge(self.content_features, how='left', left_on='item_id', right_index=True )
-                
-                df_user = df_user.dropna()
+            weighted_features = np.average(X, axis=0, weights=y)
 
-                if len(df_user) == 0:
-                    self.user_profile[u] = None
-                    continue
+            if weighted_features.sum() > 0:
+                importance = weighted_features / weighted_features.sum()
+            else:
+                importance = np.zeros_like(weighted_features)
 
-                feature_names = list(self.content_features.columns)
-                X = df_user[feature_names].values
-                y = df_user["user_ratings"].values
+            #print('Total of importance scores : ', importance.sum())
 
-                reg = LinearSVR(fit_intercept=False)
-                reg.fit(X, y)
+            full_scores = np.zeros(len(feature_names))
+            full_scores[selector.get_support(indices=True)] = importance
 
-                self.user_profile[u] = reg        
-        elif self.regressor_method == 'random_forest':
-            for u in self.user_profile:
-                ratings = self.trainset.ur[u]
-                df_user = pd.DataFrame(ratings, columns=['inner_item_id', 'user_ratings'])
-                df_user["item_id"] = df_user["inner_item_id"].map(self.trainset.to_raw_iid)
-                df_user = df_user.merge(self.content_features, how='left', left_on='item_id', right_index=True )
-                
-                df_user = df_user.dropna()
+            self.user_profile_explain[u] = dict(zip(feature_names, full_scores))
+            
 
-                if len(df_user) == 0:
-                    self.user_profile[u] = None
-                    continue
+            print(self.user_profile_explain[u]) 
+            '''
+            Observations : 
+            -- features : 'title_length', regressor = 'linear'
+            RMSE when fit_intercept = False : 1.507315
+            RMSE when fit_intercept = True : 1.08625
 
-                feature_names = list(self.content_features.columns)
-                X = df_user[feature_names].values
-                y = df_user["user_ratings"].values
+            In this context, the intercept can be interpreted as the average rating a user gives when the movie has no title.  
+            When `fit_intercept=False`, the model assumes that ratings can take the value '0', which is not the case as the minimum rating is 0.5.
 
-                reg = RandomForestRegressor()
-                reg.fit(X, y)
-
-                self.user_profile[u] = reg    
-        else:
-                pass
+            '''
         
     def estimate(self, u, i):
-        trainset = self.trainset
         """Scoring component used for item filtering"""
         # First, handle cases for unknown users and items
         if not (self.trainset.knows_user(u) and self.trainset.knows_item(i)):
@@ -267,18 +251,30 @@ class ContentBased(AlgoBase):
         elif self.regressor_method == 'random_sample':
             rd.seed()
             score = rd.choice(self.user_profile[u])
+        # (implement here the regressor prediction)
+        if self.regressor_method in regressor_map:
+            raw_item_id = self.trainset.to_raw_iid(i)
+            
+            if raw_item_id not in self.content_features.index:
+                raise PredictionImpossible("no features for this item")
 
-        elif self.regressor_method in ['linear', 'sgd', 'logistic', 'svm', 'random_forest']:
-            iid_raw = self.trainset.to_raw_iid(i)
-            iid_int = int(iid_raw)
-            if iid_int not in self.content_features.index:
-                raise PredictionImpossible("Pas de features pour cet item")
+            x = self.content_features.loc[raw_item_id:raw_item_id, :].values
 
-            x = self.content_features.loc[iid_int].values.reshape(1, -1)
-            score = self.predict(u, i)[0]
+            user_profile = self.user_profile[u]
+            model = user_profile['model']
+            selector = user_profile['selector']
+
+            x_selected = selector.transform(x)
+
+            return model.predict(x_selected)[0]
+        
         else:
             score=None
-            # (implement here the regressor prediction)
 
         return score
+    
+    def explain(self, u):
+        if u not in self.user_profile_explain or self.user_profile_explain[u] is None:
+            return {}
 
+        return self.user_profile_explain[u]

@@ -4,11 +4,9 @@ import pandas as pd
 # local imports
 from constants import Constant as C
 from surprise import Reader, Dataset
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
-import nltk
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 #nltk.download('vader_lexicon') # uncomment only for the first initialization of the program
-sia = SentimentIntensityAnalyzer()
 
 reader = Reader(rating_scale=C.RATINGS_SCALE)
 
@@ -42,34 +40,42 @@ def load_visuals(mode = 'log'):
     return df_visuals
 
 def load_genome():
-    df_genome_tags = pd.read_csv(C.GENOME_PATH / C.GENOME_TAGS)
-    df_genome_scores = pd.read_csv(C.GENOME_PATH / C.GENOME_SCORES)
-    merged = df_genome_tags.merge(df_genome_scores, how = 'inner', on = C.GENOME_TAG_ID)
-    '''
-    merged = df_genome_tags.merge(df_genome_scores, how = 'inner', on = C.GENOME_TAG_ID)
+    import pandas as pd
 
-    print('Calculating sentiment score...')
-    unique_tags = df_genome_tags['tag'].drop_duplicates()
+    genome_scores = pd.read_csv(C.GENOME_PATH / C.GENOME_SCORES)  
+    genome_tags = pd.read_csv(C.GENOME_PATH / C.GENOME_TAGS)     
 
-    tag_sentiment = {tag: sia.polarity_scores(tag)['compound'] for tag in unique_tags}
-    merged['sentiment'] = merged['tag'].map(tag_sentiment)
-    print('Calculating average sentiment...')
-    grouped = merged.groupby(C.ITEM_ID_COL).agg({'sentiment': 'mean'}).reset_index()
-    grouped 
-    grouped.to_csv('grouped_test.csv')
-    return grouped
-    '''
-    grouped = merged.groupby(C.ITEM_ID_COL).agg({'tag': list,}).reset_index()
-    print(grouped)
-    return grouped
+    df = genome_scores.merge(genome_tags, on='tagId')
 
+    df_genome = df.pivot_table(index='movieId', columns='tag', values='relevance', fill_value=0)
+
+    return df_genome
+
+def load_items_tfidf():
+    genre_corpus = load_items()['genres'].apply(lambda x: ' '.join(x))
+
+    tfidf = TfidfVectorizer()
+    X_genres_tfidf = tfidf.fit_transform(genre_corpus)
+
+    df_genres_tfidf = pd.DataFrame(
+        X_genres_tfidf.toarray(),
+        columns=tfidf.get_feature_names_out(),
+        index=load_items().index
+    )
+
+    return df_genres_tfidf
 
 def export_evaluation_report(df):
     df.to_csv(C.EVALUATION_PATH)
-    """ Export the report to the evaluation folder.
+    """ 
+    Export the report to the evaluation folder.
 
     The name of the report is versioned using today's date
     """
     return
 
+load_items_tfidf().to_csv('load_items_tfidf.csv')
+print(load_items_tfidf())
+
 print(load_genome())
+load_genome().to_csv('load_genome.csv')
