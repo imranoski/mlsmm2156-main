@@ -1,10 +1,12 @@
 import streamlit as st
 import pandas as pd
 from loaders import load_ratings, load_items
-from models import (UserBased, ContentBased, ModelBaseline4, get_top_n)
+from models import (UserBased, ContentBased, ModelBaseline1, 
+                   ModelBaseline2, ModelBaseline3, ModelBaseline4, 
+                   get_top_n)
 from constants import Constant as C
 from surprise.model_selection import train_test_split
-from pathlib import Path
+
 
 
 st.title("Système de recommandation de films")
@@ -28,15 +30,23 @@ with st.spinner('Chargement des données...'):
 st.sidebar.header("Configuration")
 model_type = st.sidebar.selectbox(
     "Type de modèle",
-    ["Collaboratif", "Contenu", "Latent"],
+    ["Basique", "Collaboratif", "Contenu"],
     index=1
 )
 
 # Sélection du modèle spécifique
-if model_type == "Collaboratif":
+if model_type == "Basique":
+    model_name = st.sidebar.selectbox(
+        "Modèle basique",
+        ["Baseline 1 (Constante)", 
+            "Baseline 2 (Aléatoire)",
+            "Baseline 3 (Moyenne)",
+            "Baseline 4 (SVD)"]
+    )
+elif model_type == "Collaboratif":
     sim_name = st.sidebar.selectbox(
         "Mesure de similarité",
-        ["msd", "jaccard", "cosine"]
+        ["msd", "jaccard"]
     )
     min_support = st.sidebar.slider(
         "Support minimum pour similarité", 
@@ -50,26 +60,11 @@ if model_type == "Collaboratif":
         "Nombre minimum de voisins (min_k)", 
         min_value=1, max_value=5, value=1
     )
-
-elif model_type == "Latent":
-    n_factors = st.sidebar.slider(
-        "Nombre de facteurs", 
-        min_value=1, max_value=200, value=100)
-    random_state = st.sidebar.slider(
-        "Générateur de nombres aléatoires", 
-        min_value=1, max_value=42, value=12)
-
 else:  # Contenu
-    if C.DATA_PATH == Path('data/hackathon'):
-        features_method = st.sidebar.selectbox(
-            "Méthode d'extraction de caractéristiques",
-            ["title_length", "visual", "all"]
-        )
-    else :
-        features_method = st.sidebar.selectbox(
-            "Méthode d'extraction de caractéristiques",
-            ["title_length", "all_limited"]
-        )
+    features_method = st.sidebar.selectbox(
+        "Méthode d'extraction de caractéristiques",
+        ["title_length", "visual", "all"]
+    )
     regressor_method = st.sidebar.selectbox(
         "Algorithme de régression",
         ["linear_fi_true", "linear_fi_false", 
@@ -87,6 +82,9 @@ selected_user = st.sidebar.selectbox(
     user_ids
 )
 
+innuid = trainset.to_inner_uid(selected_user)
+st.write(f"Utilisateur connu du trainset ? {trainset.knows_user(innuid)}")
+
 
 # Nombre de recommandations
 n_recommendations = st.sidebar.slider(
@@ -98,7 +96,17 @@ n_recommendations = st.sidebar.slider(
 if st.sidebar.button("Générer les recommandations"):
     with st.spinner('Entraînement du modèle et génération des recommandations...'):
         try:
-            if model_type == "Collaboratif":
+            # Initialisation du modèle sélectionné
+            if model_type == "Basique":
+                if model_name == "Baseline 1 (Constante)":
+                    model = ModelBaseline1()
+                elif model_name == "Baseline 2 (Aléatoire)":
+                    model = ModelBaseline2()
+                elif model_name == "Baseline 3 (Moyenne)":
+                    model = ModelBaseline3()
+                else:  # Baseline 4
+                    model = ModelBaseline4()
+            elif model_type == "Collaboratif":
                 model = UserBased(
                     k=k,
                     min_k=min_k,
@@ -107,13 +115,7 @@ if st.sidebar.button("Générer les recommandations"):
                         'min_support': min_support
                     }
                 )
-            elif model_type == "Latent":
-                model = ModelBaseline4(
-                    n_factors=n_factors,
-                    random_state=random_state
-                )
-
-            else:  
+            else:  # Contenu
                 model = ContentBased(
                     features_method=features_method,
                     regressor_method=regressor_method
@@ -129,25 +131,24 @@ if st.sidebar.button("Générer les recommandations"):
             )
             items_to_predict = list(all_items - user_rated_items)
 
-            
+            st.write(f"Items à prédire : {len(items_to_predict)}")
 
-            if model_type == "Collaboratif":
+            if trainset.knows_user(selected_user):
+                # Filtrer les items connus du trainset
                 known_items = []
                 for iid in items_to_predict:
                     try:
                         _ = trainset.to_inner_iid(int(iid))
                         known_items.append(int(iid))
                     except ValueError:
-                        continue  # On ignore les items inconnus du trainset
+                        continue
 
-            else:  # Contenu
-                # On garde tous les items à prédire
-                known_items = items_to_predict
-
-            
-            testset = [(selected_user, iid, 0) for iid in known_items]
-            predictions = model.test(testset)
-            top_n = get_top_n(predictions, n=n_recommendations).get(selected_user, [])
+                st.write(f"Items connus : {len(known_items)}")            
+                testset = [(selected_user, iid, 0) for iid in known_items]
+                predictions = model.test(testset)
+                top_n = get_top_n(predictions, n=n_recommendations).get(selected_user, [])
+            else:
+                top_n = []
 
             # Affichage des résultats
             st.subheader(f"Top {n_recommendations} recommandations pour l'utilisateur {selected_user}")

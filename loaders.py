@@ -6,8 +6,6 @@ from constants import Constant as C
 from surprise import Reader, Dataset
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-#nltk.download('vader_lexicon') # uncomment only for the first initialization of the program
-
 reader = Reader(rating_scale=C.RATINGS_SCALE)
 
 def load_ratings(surprise_format=False):
@@ -74,8 +72,8 @@ def export_evaluation_report(df):
     """
     return
 
-load_items_tfidf().to_csv('load_items_tfidf.csv')
+#load_items_tfidf().to_csv('load_items_tfidf.csv')
 print(load_items_tfidf())
 
-print(load_genome())
-load_genome().to_csv('load_genome.csv')
+#print(load_genome())
+#load_genome().to_csv('load_genome.csv')

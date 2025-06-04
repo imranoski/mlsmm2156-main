@@ -7,7 +7,7 @@ import random as rd
 import pandas as pd
 from surprise import AlgoBase
 from surprise import KNNWithMeans
-from surprise import SVD, PredictionImpossible
+from surprise import SVD
 from sklearn.linear_model import LinearRegression, SGDRegressor, Ridge
 from sklearn.svm import LinearSVR
 from sklearn.preprocessing import MinMaxScaler
@@ -16,6 +16,11 @@ from loaders import load_items, load_ratings, load_visuals, load_genome, load_it
 from sklearn.feature_selection import SelectFromModel
 from sklearn.base import clone
 from constants import Constant as C
+import heapq
+from surprise import PredictionImpossible, Prediction
+from numpy import dot
+from numpy.linalg import norm
+
 
 regressor_map = {
             'linear_fi_true': LinearRegression(fit_intercept=True),
@@ -33,14 +38,8 @@ regressor_map = {
                                                     random_state=42)                            
         }
 
-linearmodels =    ['linear_fi_true',
-            'linear_fi_false',
-            'sgd_fi_false',
-            'svr_fi_false',
-            'sgd_fi_true',
-            'svr_fi_true',
-            'ridge_fi_true',
-            'ridge_fi_false']
+
+
 
 def get_top_n(predictions, n):
     """Return the top-N recommendation for each user from a set of predictions.
@@ -112,8 +111,124 @@ class ModelBaseline3(AlgoBase):
 
 # Fourth Model
 class ModelBaseline4(SVD):
-    def __init__(self):
-        SVD.__init__(self, n_factors=100, random_state = 1)
+    def __init__(self, n_factors=100, random_state = 42):
+        SVD.__init__(self, n_factors=n_factors, random_state = random_state)
+
+class ModelBaseline5(KNNWithMeans):
+    def __init__(self, k=3, min_k=1, sim_options = {"name": "cosine","user_based": True}):  # compute  similarities between items)
+        KNNWithMeans.__init__(self, k=k, min_k=min_k, sim_options=sim_options)
+
+class UserBased(AlgoBase):
+    def __init__(self, k=3, min_k=1, sim_options={}, **kwargs):
+        AlgoBase.__init__(self, sim_options=sim_options, **kwargs)
+        self.k = k
+        self.min_k = min_k
+
+        
+    def fit(self, trainset):
+        AlgoBase.fit(self, trainset)
+        # -- implement here the fit function --
+        self.compute_rating_matrix()
+        self.mean_ratings = np.nanmean(self.ratings_matrix, axis=1)
+        self.compute_similarity_matrix()
+        return self
+
+    def test(self, testset):
+        predictions = []
+    
+        for uid, iid, rat in testset:
+            est = self.estimate(uid, iid)  
+        
+            predictions.append(Prediction(uid, iid, rat, est, {}))
+    
+        return predictions
+
+    def estimate(self, u, i):
+        #trainset = self.trainset
+        print(f"estimate called with u={u} (type={type(u)}), i={i} (type={type(i)})")
+        # Only check on raw IDs
+        if not (self.trainset.knows_user(self.trainset.to_inner_uid(u)) and self.trainset.knows_item(self.trainset.to_inner_iid(i))):
+            raise PredictionImpossible('User and/or item is unknown.')
+
+        print('raw_user_id : ', u)
+        print('raw_item_id : ', i)
+
+        #u = trainset.to_inner_uid(u)
+        #i = trainset.to_inner_iid(i)
+
+        u = self.trainset.to_inner_uid(u)
+        i = self.trainset.to_inner_iid(i)
+
+        print('inner_user_id : ', u)
+        print('inner_item_id : ', i)
+
+        est = self.mean_ratings[u]
+        # -- implement here the estimate function --
+        peergroup = []
+        for (nb, rat) in self.trainset.ir[i] :
+            if nb != u:
+                sim = self.sim[u, nb]
+                if sim > 0:
+                    peergroup.append((nb, sim, rat))
+        top_neighbours =  heapq.nlargest(self.k, peergroup, key=lambda x: x[1])
+
+        num = 0
+        denom = 0
+        actual_k = 0
+
+        for (nb, sim, rat) in top_neighbours:
+            num += sim*(rat-np.nanmean(self.ratings_matrix[nb]))
+            denom += sim
+            actual_k += 1
+
+        if actual_k >= self.min_k and denom != 0 :
+            est = est + (num / denom)
+            est = min(self.trainset.rating_scale[1], max(self.trainset.rating_scale[0], est))
+            return est
+        else :
+            est = min(self.trainset.rating_scale[1], max(self.trainset.rating_scale[0], est))
+            return est
+                    
+    def compute_rating_matrix(self):
+        # -- implement here the compute_rating_matrix function --
+        self.ratings_matrix = np.empty([self.trainset.n_users, self.trainset.n_items])
+        self.ratings_matrix[:] = np.nan
+        for uiid in self.trainset.ur:
+            for iid, rating in self.trainset.ur[uiid]:
+                self.ratings_matrix[uiid, iid] = rating
+        return self.ratings_matrix
+    
+    def compute_similarity_matrix(self):
+        # -- implement here the compute_rating_matrix function --
+        self.sim = np.eye(self.trainset.n_users)
+        similarity = 0
+        for i in range(self.trainset.n_users):
+            for j in range(i, self.trainset.n_users):
+                # get common items
+                common = ~np.isnan(self.ratings_matrix[i]) & ~np.isnan(self.ratings_matrix[j])
+                if np.sum(common) >= self.sim_options['min_support']:
+                    if self.sim_options['name'] == 'msd' :
+                        diff = self.ratings_matrix[i][common] - self.ratings_matrix[j][common]
+                        msd = np.mean(diff ** 2)
+                        similarity = 1 / (1 + msd)
+                    elif self.sim_options['name'] == 'jaccard':
+                        union = np.count_nonzero(~np.isnan(self.ratings_matrix[i])) + np.count_nonzero(~np.isnan(self.ratings_matrix[j])) - np.count_nonzero(~np.isnan(self.ratings_matrix[i]) & ~np.isnan(self.ratings_matrix[j]))
+                        similarity = np.sum(common) / union
+                    elif self.sim_options['name'] == 'cosine': ### Revérifier ce calcul!
+                        ratings_i = self.ratings_matrix[i][common]
+                        ratings_j = self.ratings_matrix[j][common]
+                        if len(ratings_i) == 0 or norm(ratings_i) == 0 or norm(ratings_j) == 0:
+                            similarity = 0
+                        else:
+                            similarity = dot(ratings_i, ratings_j) / (norm(ratings_i) * norm(ratings_j))
+                    self.sim[i, j] = similarity
+                    self.sim[j, i] = similarity
+                
+    
+        return self.sim
+
+
+
 
 
 
@@ -134,6 +249,11 @@ class ContentBased(AlgoBase):
 
         elif features_method == "title_length": # a naive method that creates only 1 feature based on title length
             df_features = df_items[C.LABEL_COL].apply(lambda x: len(x)).to_frame('n_character_title')
+            print(df_features)
+
+        elif features_method == "all_limited" :
+            df_genres = load_items_tfidf()
+            df_features = df_items[[C.YEAR]].join(df_genres, how='left').fillna(0)
             print(df_features)
 
         elif features_method == "visual" :
@@ -198,34 +318,38 @@ class ContentBased(AlgoBase):
             selector = SelectFromModel(estimator=reg, threshold='median')
             selector.fit(X, y)
 
-            reg = selector.estimator_ 
+            # Transform X
+            X_selected = selector.transform(X)
 
+            # Re-fit reg on selected features
+            reg_selected = clone(model)
+            reg_selected.fit(X_selected, y)
+
+            # Store reg + selector
+            self.user_profile[u] = {
+                'model': reg_selected,
+                'selector': selector
+            }
             try:
                 print(f'Intercept : {reg.intercept_}')
             except AttributeError:
                 pass  
 
-            self.user_profile[u] = {
-                'model': reg,
-                'selector': selector
-            }
 
-            weighted_features = np.average(X, axis=0, weights=y)
+            selected_mask = selector.get_support()
+            selected_features = X[:, selected_mask]
+
+            weighted_features = np.average(selected_features, axis=0, weights=y)
 
             if weighted_features.sum() > 0:
                 importance = weighted_features / weighted_features.sum()
             else:
                 importance = np.zeros_like(weighted_features)
 
-            #print('Total of importance scores : ', importance.sum())
-
             full_scores = np.zeros(len(feature_names))
-            full_scores[selector.get_support(indices=True)] = importance
+            full_scores[selected_mask] = importance 
 
             self.user_profile_explain[u] = dict(zip(feature_names, full_scores))
-            
-
-            print(self.user_profile_explain[u]) 
             '''
             Observations : 
             -- features : 'title_length', regressor = 'linear'
@@ -239,39 +363,35 @@ class ContentBased(AlgoBase):
         
     def estimate(self, u, i):
         """Scoring component used for item filtering"""
-        # First, handle cases for unknown users and items
+        # Vérifie que l'utilisateur et l'item existent
         if not (self.trainset.knows_user(u) and self.trainset.knows_item(i)):
-            raise PredictionImpossible('User and/or item is unkown.')
+            raise PredictionImpossible('User and/or item is unknown.')
 
-
+        # Cas random_score
         if self.regressor_method == 'random_score':
             rd.seed()
-            score = rd.uniform(0.5,5)
+            return rd.uniform(0.5, 5)
 
-        elif self.regressor_method == 'random_sample':
-            rd.seed()
-            score = rd.choice(self.user_profile[u])
-        # (implement here the regressor prediction)
+        # Récupère le profil utilisateur
+        user_profile = self.user_profile.get(u)
+        if user_profile is None:
+            raise PredictionImpossible('No profile for this user.')
+
+        # Cas régression classique
         if self.regressor_method in regressor_map:
             raw_item_id = self.trainset.to_raw_iid(i)
-            
             if raw_item_id not in self.content_features.index:
                 raise PredictionImpossible("no features for this item")
 
-            x = self.content_features.loc[raw_item_id:raw_item_id, :].values
-
-            user_profile = self.user_profile[u]
             model = user_profile['model']
             selector = user_profile['selector']
-
+            x = self.content_features.loc[raw_item_id:raw_item_id, :].values  # (1, n_features)
             x_selected = selector.transform(x)
-
+            print(f"Item {raw_item_id} - x: {x} - x_selected: {x_selected}")
             return model.predict(x_selected)[0]
-        
-        else:
-            score=None
 
-        return score
+        # Si aucune méthode reconnue
+        return None
     
     def explain(self, u):
         if u not in self.user_profile_explain or self.user_profile_explain[u] is None:
