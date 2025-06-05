@@ -6,7 +6,7 @@ import numpy as np
 import random as rd
 import pandas as pd
 from surprise import AlgoBase
-from surprise import KNNWithMeans
+from surprise import KNNWithMeans, SlopeOne
 from surprise import SVD
 from sklearn.linear_model import LinearRegression, SGDRegressor, Ridge
 from sklearn.svm import LinearSVR
@@ -72,15 +72,6 @@ def get_top_n(predictions, n):
     return top_n
 
 
-# First algorithm
-class ModelBaseline1(AlgoBase):
-    def __init__(self):
-        AlgoBase.__init__(self)
-
-    def estimate(self, u, i):
-        return 2
-
-
 # Second algorithm
 class ModelBaseline2(AlgoBase):
     def __init__(self):
@@ -110,11 +101,16 @@ class ModelBaseline3(AlgoBase):
 
 
 # Fourth Model
-class ModelBaseline4(SVD):
+class SurpriseSVD(SVD):
     def __init__(self, n_factors=100, random_state = 42):
         SVD.__init__(self, n_factors=n_factors, random_state = random_state)
 
-class ModelBaseline5(KNNWithMeans):
+class Slope(SlopeOne):
+    def __init__(self):
+        SlopeOne.__init__(self)    
+
+
+class KNNMeans(KNNWithMeans):
     def __init__(self, k=3, min_k=1, sim_options = {"name": "cosine","user_based": True}):  # compute  similarities between items)
         KNNWithMeans.__init__(self, k=k, min_k=min_k, sim_options=sim_options)
 
@@ -135,57 +131,45 @@ class UserBased(AlgoBase):
 
     def test(self, testset):
         predictions = []
-    
         for uid, iid, rat in testset:
-            est = self.estimate(uid, iid)  
-        
+            try:
+                est = self.estimate(uid, iid)
+            except PredictionImpossible:
+                est = self.trainset.global_mean  # ou continue si tu veux ignorer
             predictions.append(Prediction(uid, iid, rat, est, {}))
-    
         return predictions
 
     def estimate(self, u, i):
-        #trainset = self.trainset
-        print(f"estimate called with u={u} (type={type(u)}), i={i} (type={type(i)})")
-        # Only check on raw IDs
-        if not (self.trainset.knows_user(self.trainset.to_inner_uid(u)) and self.trainset.knows_item(self.trainset.to_inner_iid(i))):
+        # Conversion sécurisée des IDs utilisateur/item
+        try:
+            inner_uid = self.trainset.to_inner_uid(u)
+            inner_iid = self.trainset.to_inner_iid(i)
+        except ValueError:
             raise PredictionImpossible('User and/or item is unknown.')
 
-        print('raw_user_id : ', u)
-        print('raw_item_id : ', i)
-
-        #u = trainset.to_inner_uid(u)
-        #i = trainset.to_inner_iid(i)
-
-        u = self.trainset.to_inner_uid(u)
-        i = self.trainset.to_inner_iid(i)
-
-        print('inner_user_id : ', u)
-        print('inner_item_id : ', i)
-
-        est = self.mean_ratings[u]
-        # -- implement here the estimate function --
+        est = self.mean_ratings[inner_uid]
         peergroup = []
-        for (nb, rat) in self.trainset.ir[i] :
-            if nb != u:
-                sim = self.sim[u, nb]
+        for (nb, rat) in self.trainset.ir[inner_iid]:
+            if nb != inner_uid:
+                sim = self.sim[inner_uid, nb]
                 if sim > 0:
                     peergroup.append((nb, sim, rat))
-        top_neighbours =  heapq.nlargest(self.k, peergroup, key=lambda x: x[1])
+        top_neighbours = heapq.nlargest(self.k, peergroup, key=lambda x: x[1])
 
         num = 0
         denom = 0
         actual_k = 0
 
         for (nb, sim, rat) in top_neighbours:
-            num += sim*(rat-np.nanmean(self.ratings_matrix[nb]))
+            num += sim * (rat - np.nanmean(self.ratings_matrix[nb]))
             denom += sim
             actual_k += 1
 
-        if actual_k >= self.min_k and denom != 0 :
+        if actual_k >= self.min_k and denom != 0:
             est = est + (num / denom)
             est = min(self.trainset.rating_scale[1], max(self.trainset.rating_scale[0], est))
             return est
-        else :
+        else:
             est = min(self.trainset.rating_scale[1], max(self.trainset.rating_scale[0], est))
             return est
                     
@@ -226,10 +210,6 @@ class UserBased(AlgoBase):
                 
     
         return self.sim
-
-
-
-
 
 
 class ContentBased(AlgoBase):
@@ -302,6 +282,8 @@ class ContentBased(AlgoBase):
             ratings = self.trainset.ur[u]
             df_user = pd.DataFrame(ratings, columns=['inner_item_id', 'user_ratings'])
             df_user["item_id"] = df_user["inner_item_id"].map(self.trainset.to_raw_iid)
+
+            # Merge features into df_user
             df_user = df_user.merge(self.content_features, how='left', left_on='item_id', right_index=True)
             df_user = df_user.dropna()
 
@@ -350,16 +332,10 @@ class ContentBased(AlgoBase):
             full_scores[selected_mask] = importance 
 
             self.user_profile_explain[u] = dict(zip(feature_names, full_scores))
-            '''
-            Observations : 
-            -- features : 'title_length', regressor = 'linear'
-            RMSE when fit_intercept = False : 1.507315
-            RMSE when fit_intercept = True : 1.08625
 
-            In this context, the intercept can be interpreted as the average rating a user gives when the movie has no title.  
-            When `fit_intercept=False`, the model assumes that ratings can take the value '0', which is not the case as the minimum rating is 0.5.
-
-            '''
+            print(f"Utilisateur {u} : y = {y}")
+            print(f"Features shape : {X.shape}")
+            print(f"Features sélectionnées : {selector.get_support().sum()}")
         
     def estimate(self, u, i):
         """Scoring component used for item filtering"""
@@ -387,7 +363,7 @@ class ContentBased(AlgoBase):
             selector = user_profile['selector']
             x = self.content_features.loc[raw_item_id:raw_item_id, :].values  # (1, n_features)
             x_selected = selector.transform(x)
-            print(f"Item {raw_item_id} - x: {x} - x_selected: {x_selected}")
+            print(f"User : {u} - Item {raw_item_id} - pred : {model.predict(x_selected)[0]}")
             return model.predict(x_selected)[0]
 
         # Si aucune méthode reconnue

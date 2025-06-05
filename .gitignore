@@ -2,3 +2,7 @@
 coding*.zip
 *.csv
 *.zip
+/posters
+*.xlsx
+*.pdf
+

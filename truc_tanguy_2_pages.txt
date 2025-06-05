@@ -1,0 +1,198 @@
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+import streamlit as st
+import pandas as pd
+from loaders import load_ratings, load_items
+from models import (UserBased, ContentBased, ModelBaseline4, get_top_n)
+from constants import Constant as C
+from surprise.model_selection import train_test_split
+
+# === INIT ===
+if 'role' not in st.session_state:
+    st.session_state['role'] = 'Admin'
+
+st.sidebar.title("🎭 Vue")
+switch = st.sidebar.button(f"Passer en mode {'Utilisateur' if st.session_state['role'] == 'Admin' else 'Admin'}")
+if switch:
+    new_role = 'Utilisateur' if st.session_state['role'] == 'Admin' else 'Admin'
+    st.session_state['role'] = new_role
+    st.stop()  # Arrête ici pour éviter une exécution en double
+
+# === DONNÉES ===
+df_ratings = load_ratings()
+df_items = load_items()
+data = load_ratings(surprise_format=True)
+trainset, testset = train_test_split(data, test_size=0.2)
+
+# === ADMIN VIEW ===
+if st.session_state['role'] == 'Admin':
+    st.title("Système de recommandation de films - Administrateur")
+    st.markdown("""
+    Ce système propose plusieurs algorithmes de recommandation :
+    - **Collaboratif** : Filtrage basé sur les utilisateurs similaires
+    - **Contenu** : Filtrage basé sur les caractéristiques des films
+    - **Latent** : Filtrage basé sur des facteurs cachés
+    """)
+
+    st.sidebar.header("Configuration")
+    model_type = st.sidebar.selectbox("Type de modèle", ["Collaboratif", "Contenu", "Latent"], index=1)
+
+    if model_type == "Collaboratif":
+        sim_name = st.sidebar.selectbox("Mesure de similarité", ["msd", "jaccard", "cosine"])
+        min_support = st.sidebar.slider("Support minimum", 1, 10, 3)
+        k = st.sidebar.slider("k voisins", 1, 20, 3)
+        min_k = st.sidebar.slider("min_k", 1, 5, 1)
+
+    elif model_type == "Latent":
+        n_factors = st.sidebar.slider("Nombre de facteurs", 1, 200, 100)
+        random_state = 42
+
+    else:
+        features_method = st.sidebar.selectbox("Méthode caractéristiques", ["title_length", "visual", "all"])
+        regressor_method = st.sidebar.selectbox("Régression", [
+            "linear_fi_true", "linear_fi_false",
+            "sgd_fi_true", "sgd_fi_false",
+            "svr_fi_true", "svr_fi_false",
+            "random_forest", "ridge_fi_true",
+            "ridge_fi_false", "gradient"
+        ])
+
+    st.sidebar.header("Utilisateur")
+    user_ids = df_ratings['userId'].unique()
+    selected_user = st.sidebar.selectbox("Choisir un utilisateur :", user_ids)
+    n_recommendations = st.sidebar.slider("Nombre de recommandations", 1, 100, 10)
+
+    # Création du modèle
+    if 'trained_model' not in st.session_state or st.session_state.get('model_params') != (
+        model_type, sim_name if model_type=="Collaboratif" else None,
+        features_method if model_type=="Contenu" else None,
+        regressor_method if model_type=="Contenu" else None,
+        n_factors if model_type=="Latent" else None,
+        random_state if model_type=="Latent" else None
+    ):
+        if model_type == "Collaboratif":
+            model = UserBased(k=k, min_k=min_k, sim_options={'name': sim_name, 'min_support': min_support})
+        elif model_type == "Latent":
+            model = ModelBaseline4(n_factors=n_factors, random_state=random_state)
+        else:
+            model = ContentBased(features_method=features_method, regressor_method=regressor_method)
+
+        model.fit(trainset)
+        st.session_state['trained_model'] = model
+        st.session_state['model_params'] = (
+            model_type, sim_name if model_type=="Collaboratif" else None,
+            features_method if model_type=="Contenu" else None,
+            regressor_method if model_type=="Contenu" else None,
+            n_factors if model_type=="Latent" else None,
+            random_state if model_type=="Latent" else None
+        )
+
+    model = st.session_state['trained_model']
+
+    if st.sidebar.button("Générer les recommandations"):
+        with st.spinner("Génération en cours..."):
+            all_items = set(df_items.index)
+            rated_items = set(df_ratings[df_ratings['userId'] == selected_user]['movieId'])
+            items_to_predict = list(all_items - rated_items)
+
+            if model_type == "Collaboratif":
+                known_items = [iid for iid in items_to_predict if iid in trainset._raw2inner_id_items]
+            else:
+                known_items = items_to_predict
+
+            testset = [(selected_user, iid, 0) for iid in known_items]
+            predictions = model.test(testset)
+            top_n = get_top_n(predictions, n=n_recommendations).get(selected_user, [])
+
+            st.subheader(f"Top {n_recommendations} recommandations pour l'utilisateur {selected_user}")
+            if not top_n:
+                st.warning("Aucune recommandation trouvée.")
+            else:
+                df_rec = pd.DataFrame([
+                    {
+                        "Titre": df_items.loc[iid]['title'] if iid in df_items.index else str(iid),
+                        "Année": df_items.loc[iid][C.YEAR] if iid in df_items.index else "Inconnu",
+                        "Genres": ", ".join(df_items.loc[iid][C.GENRES_COL]) if iid in df_items.index else "Inconnu",
+                        "Score": f"{score:.2f}"
+                    }
+                    for iid, score in top_n
+                ])
+                st.table(df_rec)
+
+    # Historique utilisateur
+    st.header(f"Historique de l'utilisateur {selected_user}")
+    user_history = df_ratings[df_ratings['userId'] == selected_user].merge(df_items, left_on='movieId', right_index=True)
+    if not user_history.empty:
+        user_history = user_history.sort_values('rating', ascending=False)
+        st.write(f"Nombre de films notés : {len(user_history)}")
+        cols = st.columns(3)
+        for idx, row in user_history.head(3).iterrows():
+            with cols[idx % 3]:
+                st.markdown(f"**{row['title']}** ({row[C.YEAR]})")
+                st.markdown(f"Note: {row['rating']}/5")
+                st.markdown(f"Genres: {', '.join(row[C.GENRES_COL])}")
+    else:
+        st.warning("Aucune note trouvée pour cet utilisateur.")
+
+# === USER VIEW ===
+else:
+    st.title("🎬 Recommandations personnalisées")
+
+    user_ids = df_ratings['userId'].unique()
+    selected_user = st.selectbox("Sélectionnez votre identifiant :", user_ids)
+
+    # Filtres
+    st.sidebar.header("🎚️ Filtres")
+    available_years = sorted(df_items[C.YEAR].dropna().unique())
+    selected_years = st.sidebar.slider("Année de sortie", int(min(available_years)), int(max(available_years)), (1990, 2020))
+    all_genres = sorted({genre for sublist in df_items[C.GENRES_COL] for genre in sublist})
+    selected_genres = st.sidebar.multiselect("Genres", all_genres, default=[])
+
+    n_recommendations = st.sidebar.slider("Nombre de films à afficher", 5, 50, 15)
+
+    # Génération des recommandations utilisateur
+    if 'trained_model' not in st.session_state:
+        st.warning("Le modèle n'est pas encore configuré par l'administrateur.")
+    else:
+        model = st.session_state['trained_model']
+        all_items = set(df_items.index)
+        rated_items = set(df_ratings[df_ratings['userId'] == selected_user]['movieId'])
+        items_to_predict = list(all_items - rated_items)
+
+        testset = [(selected_user, iid, 0) for iid in items_to_predict]
+        predictions = model.test(testset)
+        top_n = get_top_n(predictions, n=100).get(selected_user, [])
+
+        # Filtrage par année et genre
+        filtered = []
+        for movie_id, score in top_n:
+            if movie_id not in df_items.index:
+                continue
+            movie = df_items.loc[movie_id]
+            if not (selected_years[0] <= movie[C.YEAR] <= selected_years[1]):
+                continue
+
+            # Filtre genres uniquement si au moins un genre est sélectionné
+            if selected_genres:
+                if not set(movie[C.GENRES_COL]).intersection(set(selected_genres)):
+                    continue
+
+            filtered.append((movie_id, score))
+            if len(filtered) >= n_recommendations:
+                break
+
+        st.subheader("🎥 Vos recommandations")
+        if not filtered:
+            st.info("Aucun film ne correspond à vos filtres.")
+        else:
+            rows = [filtered[i:i+5] for i in range(0, len(filtered), 5)]
+            for row in rows:
+                cols = st.columns(len(row))
+                for idx, (movie_id, score) in enumerate(row):
+                    movie = df_items.loc[movie_id]
+                    with cols[idx]:
+                        st.markdown(f"**{movie['title']}** ({movie[C.YEAR]})")
+                        st.markdown(f"Genres : {', '.join(movie[C.GENRES_COL])}")
+                        st.markdown(f"⭐ Score : {score:.2f}")
