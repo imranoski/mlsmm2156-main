@@ -5,7 +5,7 @@ from datetime import datetime
 class Constant:
 
     DATA_PATH = Path('data/small')  # -- fill here the dataset size to use 
-
+    DATA_PATH_PLUS = Path('data/hackathon/')
  
     # Content
     CONTENT_PATH = DATA_PATH / 'content'
@@ -31,7 +31,7 @@ class Constant:
 
     # Visuals
     VISUAL_MOVIE_ID = 'ML_Id'
-    VISUAL_PATH = DATA_PATH / 'content' / 'visuals'
+    VISUAL_PATH = DATA_PATH_PLUS / 'content' / 'visuals'
     VISUAL_LOG_FILENAME = 'LLVisualFeatures13K_Log.csv'
     VISUAL_QUANTILE_FILENAME = 'LLVisualFeatures13K_Quantile.csv'
     VISUAL_QUANTILELOG_FILENAME = 'LLVisualFeatures13K_QuantileLog.csv'
@@ -46,7 +46,7 @@ class Constant:
     SHOT_NUM = 'f7'
 
     # Genome
-    GENOME_PATH = DATA_PATH / 'content'
+    GENOME_PATH = DATA_PATH_PLUS / 'content'
     GENOME_TAGS = 'genome-tags.csv'
     GENOME_SCORES = 'genome-scores.csv'
     GENOME_TAG_ID = 'tagId'

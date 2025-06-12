@@ -29,16 +29,23 @@ regressor_map = {
             'svr_fi_false': LinearSVR(fit_intercept=False),
             'sgd_fi_true': SGDRegressor(fit_intercept=True),
             'svr_fi_true': LinearSVR(fit_intercept=True),
-            'random_forest': RandomForestRegressor(n_estimators=10, max_depth = 3),
             'ridge_fi_false' : Ridge(max_iter=1000, alpha=1.0, fit_intercept=False),
-            'ridge_fi_true' : Ridge(max_iter=1000, alpha=1.0, fit_intercept=True),
+            'ridge_fi_true_alpha0.5' : Ridge(max_iter=1000, alpha=0.5, fit_intercept=True),
+            'ridge_fi_true_alpha1.0' : Ridge(max_iter=1000, alpha=1.0, fit_intercept=True),
+            'ridge_fi_true_alpha5.0' : Ridge(max_iter=1000, alpha=5.0, fit_intercept=True),
+            'ridge_fi_true_alpha10.0' : Ridge(max_iter=1000, alpha=10.0, fit_intercept=True),
+
             'gradient' : GradientBoostingRegressor(n_estimators=100,  
                                                     learning_rate=0.1, 
                                                     max_depth=3,        
                                                     random_state=42)                            
         }
 
+for i in range(10, 41):
+    for j in range(1, 6):
+        regressor_map[f'random_forest_est{i}_depth{j}'] = RandomForestRegressor(n_estimators=i, max_depth = j)
 
+regressor_map = regressor_map
 
 
 def get_top_n(predictions, n):
@@ -122,6 +129,9 @@ class UserBased(AlgoBase):
 
         
     def fit(self, trainset):
+        self.user_profile = {u: None for u in trainset.all_users()}
+        self.user_profile_explain = {}
+
         AlgoBase.fit(self, trainset)
         # -- implement here the fit function --
         self.compute_rating_matrix()
@@ -129,6 +139,36 @@ class UserBased(AlgoBase):
         self.compute_similarity_matrix()
         return self
 
+    def explain(self, u, i):
+        """
+        Retourne une explication de la prédiction UserBased pour un utilisateur et un film.
+        Renvoie une liste de dicts : voisin, similarité, note du voisin pour ce film.
+        """
+        try:
+            inner_uid = self.trainset.to_inner_uid(u)
+            inner_iid = self.trainset.to_inner_iid(i)
+        except ValueError:
+            return []
+
+        peergroup = []
+        for (nb, rat) in self.trainset.ir[inner_iid]:
+            if nb != inner_uid:
+                sim = self.sim[inner_uid, nb]
+                if sim > 0:
+                    peergroup.append((nb, sim, rat))
+        print("peergroup : ", peergroup)
+        top_neighbours = heapq.nlargest(self.k, peergroup, key=lambda x: x[1])
+        print("top neighbours : ", top_neighbours)
+        explanation = []
+        for nb, sim, rat in top_neighbours:
+            raw_nb = self.trainset.to_raw_uid(nb)
+            explanation.append({
+                "neighbour": raw_nb,
+                "similarity": round(float(sim), 3),
+                "rating of the neighbour": float(rat)
+            })
+        return explanation
+    
     def test(self, testset):
         predictions = []
         for uid, iid, rat in testset:
@@ -138,6 +178,7 @@ class UserBased(AlgoBase):
                 est = self.trainset.global_mean  # ou continue si tu veux ignorer
             predictions.append(Prediction(uid, iid, rat, est, {}))
         return predictions
+    
 
     def estimate(self, u, i):
         # Conversion sécurisée des IDs utilisateur/item
@@ -198,7 +239,7 @@ class UserBased(AlgoBase):
                     elif self.sim_options['name'] == 'jaccard':
                         union = np.count_nonzero(~np.isnan(self.ratings_matrix[i])) + np.count_nonzero(~np.isnan(self.ratings_matrix[j])) - np.count_nonzero(~np.isnan(self.ratings_matrix[i]) & ~np.isnan(self.ratings_matrix[j]))
                         similarity = np.sum(common) / union
-                    elif self.sim_options['name'] == 'cosine': ### Revérifier ce calcul!
+                    elif self.sim_options['name'] == 'cosine':
                         ratings_i = self.ratings_matrix[i][common]
                         ratings_j = self.ratings_matrix[j][common]
                         if len(ratings_i) == 0 or norm(ratings_i) == 0 or norm(ratings_j) == 0:
@@ -208,7 +249,7 @@ class UserBased(AlgoBase):
                     self.sim[i, j] = similarity
                     self.sim[j, i] = similarity
                 
-    
+        print(self.sim)
         return self.sim
 
 

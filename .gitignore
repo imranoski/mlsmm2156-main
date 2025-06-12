@@ -5,4 +5,12 @@ coding*.zip
 /posters
 *.xlsx
 *.pdf
-
+/diagram_report
+/project_structure
+/sources
+/streamlit-recommender-app
+simpleapp.py
+backupapp.py
+truc_tanguy_2_pages.txt
+user_interface.py
+/report

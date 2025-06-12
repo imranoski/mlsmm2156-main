@@ -6,6 +6,7 @@ from constants import Constant as C
 
 st.title("Recommandations - Démo simple")
 
+
 # Chargement des données
 df_ratings = load_ratings()
 df_items = load_items()
@@ -13,13 +14,14 @@ user_ids = sorted(df_ratings[C.USER_ID_COL].unique())
 item_ids = sorted(df_items.index)
 
 # Sélection du modèle
+
 model_name = st.selectbox(
     "Choisissez le modèle",
     ["SurpriseSVD (SVD)", "UserBased", "ContentBased", "SlopeOne"]
 )
 
 if model_name == "ContentBased":
-    features_method = st.selectbox("Méthode features", ["title_length", "all_limited"])
+    features_method = st.selectbox("Méthode features", ["title_length", "all_limited", "all"])
     regressor_method = st.selectbox("Régression", ["linear_fi_true", "random_forest", "ridge_fi_true"])
 
 selected_user = st.selectbox("Utilisateur :", user_ids)
@@ -71,11 +73,30 @@ if st.button("Calculer les prédictions pour cet utilisateur"):
         left_on="movieId", right_index=True, how="left"
     )
     st.session_state["df_preds"] = df_preds
+    st.session_state["last_model"] = model
     st.success("Prédictions calculées !")
 
 # Affichage
 if "df_preds" in st.session_state:
     df_preds = st.session_state["df_preds"]
+
+    # Explication des recommandations (ContentBased uniquement)
+    if model_name == "ContentBased":
+        if st.button("Expliquer la recommandation pour cet utilisateur"):
+            model = st.session_state.get("last_model", None)  # Récupération du modèle
+            if model is not None:
+                explanation = model.explain(selected_user)
+                print(explanation)
+                if explanation:
+                    st.write("Importance des features pour cet utilisateur :")
+                    df_exp = pd.DataFrame([{"feature" : f, "importance (%)" : round(i*100,2)} 
+                                           for f, i in explanation.items()  if i != 0]).sort_values("importance (%)", ascending=False)
+                    st.table(df_exp)
+                else:
+                    st.info("Aucune explication disponible pour cet utilisateur.")
+            else:
+                st.warning("Aucun modèle disponible pour l'explication.")
+
     # On trie par score de prédiction décroissant
     df_preds = df_preds.sort_values("prediction", ascending=False)
     df_preds = df_preds.reset_index(drop=True)
@@ -108,16 +129,7 @@ if "df_preds" in st.session_state:
     st.write(f"Recommandations pour l'utilisateur {selected_user} (films non notés, filtrés) :")
     st.dataframe(df_preds[["movieId", C.LABEL_COL, C.GENRES_COL, "year", "prediction"]].head(n_recos))
 
-    # Explication des recommandations (ContentBased uniquement)
-    if model_name == "ContentBased":
-        if st.button("Expliquer la recommandation pour cet utilisateur"):
-            # On utilise le dernier modèle entraîné (celui de la prédiction)
-            explanation = model.explain(selected_user)
-            if explanation:
-                st.write("Importance des features pour cet utilisateur :")
-                st.json(explanation)
-            else:
-                st.info("Aucune explication disponible pour cet utilisateur.")
+
 else:
     st.info("Cliquez sur le bouton pour générer les prédictions.")
 
